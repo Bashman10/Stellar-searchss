@@ -12,7 +12,7 @@ import {
   getNetwork,
 } from '@stellar/freighter-api'
 import { Horizon } from '@stellar/stellar-sdk'
-import { HORIZON_URL, USDC_ISSUER } from '../lib/stellar'
+import { HORIZON_URL, USDB_ISSUER } from '../lib/stellar'
 
 export interface WalletState {
   publicKey: string | null
@@ -22,6 +22,7 @@ export interface WalletState {
   usdcBalance: string
   loading: boolean
   error: string | null
+  fundingRequired: boolean
 }
 
 export interface StellarTransaction {
@@ -38,6 +39,16 @@ export interface StellarTransaction {
 
 const horizon = new Horizon.Server(HORIZON_URL)
 
+const FUNDING_ERROR = 'This account is not funded yet'
+
+function isHorizon404(err: any): boolean {
+  if (!err) return false
+  if (err.response?.status === 404) return true
+  if (err.status === 404) return true
+  const message = String(err.message || '')
+  return /404/.test(message) || /not found/i.test(message)
+}
+
 export function useFreighterWallet() {
   const [wallet, setWallet] = useState<WalletState>({
     publicKey: null,
@@ -47,6 +58,7 @@ export function useFreighterWallet() {
     usdcBalance: '0',
     loading: false,
     error: null,
+    fundingRequired: false,
   })
   const [transactions, setTransactions] = useState<StellarTransaction[]>([])
   const [txLoading, setTxLoading] = useState(false)
@@ -65,7 +77,7 @@ export function useFreighterWallet() {
         } else if (
           balance.asset_type === 'credit_alphanum4' &&
           (balance as any).asset_code === 'USDC' &&
-          (balance as any).asset_issuer === USDC_ISSUER
+          (balance as any).asset_issuer === USDB_ISSUER
         ) {
           usdc = parseFloat(balance.balance).toFixed(6)
         }
@@ -76,11 +88,24 @@ export function useFreighterWallet() {
         xlmBalance: xlm,
         usdcBalance: usdc,
         error: null,
+        fundingRequired: false,
       }))
     } catch (err: any) {
+      console.error('Failed to load account from Horizon:', err)
+      if (isHorizon404(err)) {
+        setWallet(prev => ({
+          ...prev,
+          xlmBalance: '0',
+          usdcBalance: '0',
+          error: FUNDING_ERROR,
+          fundingRequired: true,
+        }))
+        return
+      }
       setWallet(prev => ({
         ...prev,
         error: err.message || 'Failed to load account',
+        fundingRequired: false,
       }))
     }
   }, [])
@@ -123,7 +148,7 @@ export function useFreighterWallet() {
 
   // Connect Freighter wallet
   const connect = useCallback(async () => {
-    setWallet(prev => ({ ...prev, loading: true, error: null }))
+    setWallet(prev => ({ ...prev, loading: true, error: null, fundingRequired: false }))
 
     try {
       const connected = await isConnected()
@@ -153,6 +178,7 @@ export function useFreighterWallet() {
         network,
         loading: false,
         error: null,
+        fundingRequired: false,
       }))
 
       // Fetch live data after connect
@@ -164,6 +190,7 @@ export function useFreighterWallet() {
         loading: false,
         connected: false,
         error: err.message || 'Connection failed',
+        fundingRequired: false,
       }))
     }
   }, [fetchBalances, fetchTransactions])
@@ -177,6 +204,7 @@ export function useFreighterWallet() {
       usdcBalance: '0',
       loading: false,
       error: null,
+      fundingRequired: false,
     })
     setTransactions([])
   }, [])
